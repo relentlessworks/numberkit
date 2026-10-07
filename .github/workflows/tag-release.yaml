@@ -1,0 +1,81 @@
+name: Tag & Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  tag-and-release:
+    name: Tag, Build, Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Read version
+        id: version
+        run: |
+          VERSION=$(cat VERSION)
+          echo "version=v${VERSION}" >> $GITHUB_OUTPUT
+          echo "Version: v${VERSION}"
+
+      - name: Check if tag exists
+        id: check_tag
+        run: |
+          if git rev-parse "refs/tags/${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create tag
+        if: steps.check_tag.outputs.exists == 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag ${{ steps.version.outputs.version }}
+          git push origin ${{ steps.version.outputs.version }}
+
+      - name: Build binaries
+        if: steps.check_tag.outputs.exists == 'false'
+        strategy:
+          matrix:
+            goos: [linux, darwin, windows]
+            goarch: [amd64, arm64]
+            exclude:
+              - goos: windows
+                goarch: arm64
+        run: |
+          mkdir -p dist
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 \
+            go build -trimpath -ldflags "-s -w" \
+            -o dist/numberkit-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }} \
+            ./cmd/numberkit
+          cd dist
+          tar czf numberkit-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz \
+            numberkit-${{ matrix.goos }}-${{ matrix.goarch }}*
+
+      - name: Generate checksums
+        if: steps.check_tag.outputs.exists == 'false'
+        run: |
+          cd dist
+          sha256sum *.tar.gz > checksums.txt
+
+      - name: Create release
+        if: steps.check_tag.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.version.outputs.version }}"
+          gh release create "$TAG" \
+            --title "numberkit $TAG" \
+            --notes "Release $TAG" \
+            dist/*.tar.gz dist/checksums.txt

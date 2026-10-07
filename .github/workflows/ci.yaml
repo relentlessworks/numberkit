@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - 'LICENSE'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - 'LICENSE'
+
+jobs:
+  check:
+    name: Lint, Test, Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Go vet
+        run: go vet ./...
+      - name: Test
+        run: go test -race ./...
+      - name: Build
+        run: CGO_ENABLED=0 go build -trimpath ./cmd/numberkit
+
+  cross-compile:
+    name: Cross-Compile
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    needs: check
+    strategy:
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+        exclude:
+          - goos: windows
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: go build -trimpath -ldflags "-s -w" -o numberkit-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }} ./cmd/numberkit
+      - uses: actions/upload-artifact@v4
+        with:
+          name: numberkit-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: numberkit-${{ matrix.goos }}-${{ matrix.goarch }}*

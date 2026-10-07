@@ -1,0 +1,4 @@
+/numberkit
+*.exe
+*.test
+.env
